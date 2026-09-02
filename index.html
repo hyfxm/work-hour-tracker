@@ -32,7 +32,7 @@
   body { height: 100vh; height: 100dvh; display: flex; flex-direction: column; overflow: hidden; background: var(--bg); color: var(--text); font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif; line-height: 1.45; font-size: 14px; }
 
   /* 顶部 */
-  .app-header { flex: 0 0 auto; height: 50px; background: var(--card); border-bottom: 1px solid var(--line); display: flex; align-items: center; justify-content: space-between; padding: 0 14px; position: relative; z-index: 20; }
+  .app-header { flex: 0 0 auto; height: calc(50px + env(safe-area-inset-top)); background: var(--card); border-bottom: 1px solid var(--line); display: flex; align-items: center; justify-content: space-between; padding: env(safe-area-inset-top) 14px 0; position: relative; z-index: 20; }
   .app-header h1 { margin: 0; font-size: 17px; font-weight: 800; }
   .month-trigger { display: flex; align-items: center; gap: 4px; font-size: 14px; font-weight: 700; padding: 6px 10px; background: #f3f4f6; border-radius: 8px; cursor: pointer; }
   .month-trigger .arrow { font-size: 10px; color: var(--muted); }
