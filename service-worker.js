@@ -1,5 +1,5 @@
-const CACHE = 'wht-pwa-v2';
-const ASSETS = ['index.html', 'icon-192.png', 'icon-512.png', 'manifest.webmanifest'];
+const CACHE = 'wht-pwa-v4';
+const ASSETS = ['index.html', 'icon-192.png', 'icon-512.png', 'manifest.webmanifest', 'jsqr.js'];
 
 self.addEventListener('install', (e) => {
   e.waitUntil(
