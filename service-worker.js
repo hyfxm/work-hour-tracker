@@ -1,4 +1,4 @@
-const CACHE = 'wht-pwa-v1';
+const CACHE = 'wht-pwa-v2';
 const ASSETS = ['index.html', 'icon-192.png', 'icon-512.png', 'manifest.webmanifest'];
 
 self.addEventListener('install', (e) => {

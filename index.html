@@ -167,12 +167,31 @@
   .month-grid button.selected { background: var(--primary); color: #fff; border-color: var(--primary); }
   .month-grid button:active { background: #f3f4f6; }
   .month-grid button.selected:active { background: #1d4ed8; }
+
+  /* 同步状态灯 */
+  .sync-ind { width: 26px; height: 26px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 13px; font-weight: 800; cursor: pointer; flex: none; }
+  .sync-ind.idle { background: #f3f4f6; color: #9ca3af; }
+  .sync-ind.ok { background: var(--ok-bg); color: var(--ok); }
+  .sync-ind.pending { background: var(--pending-bg); color: #92400e; }
+  .sync-ind.syncing { background: #eff6ff; color: var(--primary); }
+  .sync-ind.error { background: var(--warn-bg); color: var(--warn); }
+
+  /* 通用底部抽屉（云同步） */
+  .sheet-overlay { position: fixed; inset: 0; background: rgba(0,0,0,.35); opacity: 0; pointer-events: none; transition: opacity .25s; z-index: 40; }
+  .sheet-overlay.open { opacity: 1; pointer-events: auto; }
+  .sheet-drawer { position: fixed; left: 0; right: 0; bottom: 0; background: var(--card); border-radius: 20px 20px 0 0; transform: translateY(100%); transition: transform .25s ease-out; z-index: 50; padding: 16px 16px calc(16px + env(safe-area-inset-bottom)); max-height: 88vh; overflow-y: auto; }
+  .sheet-drawer.open { transform: translateY(0); }
+  .sheet-drawer .header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; }
+  .sheet-drawer .header .title { font-size: 16px; font-weight: 800; }
+  .sheet-drawer .header .close { background: none; border: none; color: var(--muted); font-size: 13px; cursor: pointer; padding: 6px; }
+  .cloud-info { font-size: 13px; color: #374151; line-height: 1.6; }
 </style>
 </head>
 <body>
 
 <header class="app-header">
   <h1>工时助手</h1>
+  <div class="sync-ind idle" id="syncInd" title="云同步：未开启">☁</div>
   <div class="month-trigger" id="monthTrigger">
     <span id="monthLabel">2026年09月</span>
     <span class="arrow">▼</span>
@@ -307,6 +326,13 @@
     </div>
   </div>
   <div class="panel-card">
+    <div class="panel-title">云同步</div>
+    <div class="rule-text" id="cloudSummary" style="font-size:12px;color:var(--muted);margin-bottom:12px;">未开启，数据仅存本机。</div>
+    <div class="action-row">
+      <button class="btn btn-primary" id="openCloud">开启云同步</button>
+    </div>
+  </div>
+  <div class="panel-card">
     <div class="panel-title">数据操作</div>
     <div class="action-row">
       <button class="btn btn-ghost" id="fillSample">填充示例</button>
@@ -345,6 +371,44 @@
     <button class="arrow" id="yearNext">›</button>
   </div>
   <div class="month-grid" id="monthGrid"></div>
+</div>
+
+<!-- 云同步抽屉 -->
+<div class="sheet-overlay" id="cloudOverlay"></div>
+<div class="sheet-drawer" id="cloudDrawer">
+  <div class="header">
+    <div class="title">云同步设置</div>
+    <button class="close" id="cloudClose">关闭</button>
+  </div>
+  <div class="panel-card">
+    <div class="form-group">
+      <label for="cfgUrl">Supabase 项目 URL</label>
+      <input type="text" id="cfgUrl" placeholder="https://xxxx.supabase.co" />
+    </div>
+    <div class="form-group">
+      <label for="cfgAnon">Anon Key（公开钥匙，Settings → API 可找到）</label>
+      <input type="text" id="cfgAnon" placeholder="eyJhbGci..." />
+    </div>
+    <div class="form-group">
+      <label for="cfgCode">同步码（换设备用同一码，建议随机）</label>
+      <div style="display:flex;gap:8px;align-items:flex-end;">
+        <input type="text" id="cfgCode" class="date-input" placeholder="点击右侧随机生成" style="flex:1;" />
+        <button type="button" class="btn btn-ghost" id="genCode" style="width:auto;margin-top:0;padding:0 16px;">随机</button>
+      </div>
+    </div>
+    <button class="btn btn-primary" id="saveCloud">保存并开启同步</button>
+  </div>
+  <div class="panel-card" id="cloudStatusCard" style="display:none;">
+    <div class="panel-title">同步状态</div>
+    <div class="cloud-info" id="cloudInfo"></div>
+    <div class="action-row">
+      <button class="btn btn-ghost" id="syncNow">立即同步</button>
+      <button class="btn btn-danger" id="exitCloud">退出云同步</button>
+    </div>
+  </div>
+  <div class="example-box">
+    步骤：去 supabase.com 免费建项目 → 在 SQL Editor 执行建表语句（见 CLOUD.md）→ Settings → API 复制 Project URL 与 anon public key 填上方。同步码相当于你的"轻账号"，请用长随机串。
+  </div>
 </div>
 
 <script>
@@ -404,7 +468,7 @@ const STORE_KEY = 'wht_records_v1';
 const $ = (id) => document.getElementById(id);
 
 function loadAll() { try { return JSON.parse(localStorage.getItem(STORE_KEY)) || {}; } catch { return {}; } }
-function saveAll(map) { localStorage.setItem(STORE_KEY, JSON.stringify(map)); }
+function saveAll(map) { localStorage.setItem(STORE_KEY, JSON.stringify(map)); scheduleSync(); }
 let currentMonth = '2026-09';
 
 function monthPrefix() { return currentMonth; }
@@ -675,6 +739,171 @@ $('fillSample').addEventListener('click', () => {
   render();
 });
 
+/* ============ 云同步（Supabase REST，无需外部库） ============ */
+const CFG_KEY = 'wht_cloud_cfg_v1';
+function loadCfg() { try { return JSON.parse(localStorage.getItem(CFG_KEY)) || null; } catch { return null; } }
+function saveCfg(c) { localStorage.setItem(CFG_KEY, JSON.stringify(c)); }
+let SUPABASE = { url: '', anon: '', code: '' };
+function loadCloud() {
+  const c = loadCfg();
+  if (c) { SUPABASE.url = c.url || ''; SUPABASE.anon = c.anon || ''; SUPABASE.code = c.code || ''; }
+  return c;
+}
+function isCloudEnabled() { return !!(SUPABASE.url && SUPABASE.anon && SUPABASE.code); }
+function apiHeaders() {
+  return {
+    'apikey': SUPABASE.anon,
+    'Authorization': 'Bearer ' + SUPABASE.anon,
+    'Content-Type': 'application/json',
+    'Prefer': 'return=representation'
+  };
+}
+async function pullFromCloud() {
+  const res = await fetch(`${SUPABASE.url}/rest/v1/work_data?sync_code=eq.${encodeURIComponent(SUPABASE.code)}`, { headers: apiHeaders() });
+  if (res.status === 401 || res.status === 403) throw new Error('AUTH');
+  if (!res.ok) throw new Error('PULL');
+  const rows = await res.json();
+  return rows[0] ? rows[0].payload : null;
+}
+async function pushToCloud(payload) {
+  const body = [{ sync_code: SUPABASE.code, payload, updated_at: new Date().toISOString() }];
+  const res = await fetch(`${SUPABASE.url}/rest/v1/work_data?on_conflict=sync_code`, {
+    method: 'POST',
+    headers: { ...apiHeaders(), 'Prefer': 'resolution=merge-duplicates,return=representation' },
+    body: JSON.stringify(body)
+  });
+  if (res.status === 401 || res.status === 403) throw new Error('AUTH');
+  if (!res.ok) throw new Error('PUSH');
+}
+function mergeRecords(local, cloud) {
+  const out = cloud ? { ...cloud } : {};
+  for (const [date, rec] of Object.entries(local)) out[date] = rec; // 本地优先
+  return out;
+}
+function setSyncStatus(state) {
+  const el = $('syncInd');
+  if (!el) return;
+  el.className = 'sync-ind ' + state;
+  const map = { idle: '☁', syncing: '↻', ok: '✓', pending: '!', error: '✕' };
+  el.textContent = map[state] || '☁';
+  const tip = { idle: '云同步未开启', syncing: '同步中…', ok: '已同步到云端', pending: '待同步（离线或稍后重试）', error: '同步失败（检查配置）' };
+  el.title = tip[state] || '';
+}
+let syncing = false;
+async function syncNow() {
+  if (!isCloudEnabled() || syncing) return;
+  syncing = true;
+  setSyncStatus('syncing');
+  try {
+    const cloud = await pullFromCloud();
+    const local = loadAll();
+    const merged = mergeRecords(local, cloud);
+    if (cloud && JSON.stringify(merged) !== JSON.stringify(cloud)) {
+      localStorage.setItem(STORE_KEY, JSON.stringify(merged));
+      render();
+    }
+    await pushToCloud(merged);
+    localStorage.setItem(STORE_KEY, JSON.stringify(merged));
+    setSyncStatus('ok');
+    refreshCloudUI();
+  } catch (e) {
+    setSyncStatus(e.message === 'AUTH' ? 'error' : 'pending');
+  } finally {
+    syncing = false;
+  }
+}
+let syncTimer = null;
+function scheduleSync() {
+  if (!isCloudEnabled()) return;
+  setSyncStatus('pending');
+  clearTimeout(syncTimer);
+  syncTimer = setTimeout(() => syncNow().catch(() => {}), 700);
+}
+function refreshCloudUI() {
+  const enabled = isCloudEnabled();
+  const sum = $('cloudSummary');
+  const statusCard = $('cloudStatusCard');
+  if (!sum) return;
+  if (enabled) {
+    sum.textContent = `已开启 · 同步码：${SUPABASE.code}（换设备用它）`;
+    statusCard.style.display = 'block';
+    $('cloudInfo').textContent = '数据已通过 Supabase 在设备间同步；同步码即你的身份，请妥善保管。';
+    $('openCloud').textContent = '修改云同步配置';
+  } else {
+    sum.textContent = '未开启，数据仅存本机。';
+    statusCard.style.display = 'none';
+    $('openCloud').textContent = '开启云同步';
+  }
+}
+function openCloudDrawer() {
+  const c = loadCfg();
+  if (c) {
+    $('cfgUrl').value = c.url || '';
+    $('cfgAnon').value = c.anon || '';
+    $('cfgCode').value = c.code || '';
+  }
+  $('cloudOverlay').classList.add('open');
+  $('cloudDrawer').classList.add('open');
+  refreshCloudUI();
+}
+function closeCloudDrawer() {
+  $('cloudOverlay').classList.remove('open');
+  $('cloudDrawer').classList.remove('open');
+}
+function genCode() {
+  const s = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  let r = '';
+  for (let i = 0; i < 12; i++) r += s[Math.floor(Math.random() * s.length)];
+  $('cfgCode').value = r;
+}
+async function saveCloudCfg() {
+  const url = $('cfgUrl').value.trim().replace(/\/$/, '');
+  const anon = $('cfgAnon').value.trim();
+  const code = $('cfgCode').value.trim() || (genCode(), $('cfgCode').value.trim());
+  if (!url || !anon || !code) { alert('请填写 URL、Anon Key 和同步码'); return; }
+  SUPABASE = { url, anon, code };
+  saveCfg({ url, anon, code });
+  setSyncStatus('syncing');
+  try {
+    const local = loadAll();
+    const cloud = await pullFromCloud();
+    const merged = mergeRecords(local, cloud);
+    localStorage.setItem(STORE_KEY, JSON.stringify(merged));
+    await pushToCloud(merged);
+    setSyncStatus('ok');
+    render();
+  } catch (e) {
+    setSyncStatus(e.message === 'AUTH' ? 'error' : 'pending');
+  }
+  refreshCloudUI();
+}
+function exitCloud() {
+  if (!confirm('退出云同步？本机数据保留，云端数据不删除。')) return;
+  SUPABASE = { url: '', anon: '', code: '' };
+  localStorage.removeItem(CFG_KEY);
+  setSyncStatus('idle');
+  refreshCloudUI();
+}
+function initCloud() {
+  loadCloud();
+  if (isCloudEnabled()) {
+    setSyncStatus('pending');
+    syncNow().catch(() => {});
+  } else {
+    setSyncStatus('idle');
+  }
+  refreshCloudUI();
+}
+
+$('openCloud').addEventListener('click', openCloudDrawer);
+$('cloudClose').addEventListener('click', closeCloudDrawer);
+$('cloudOverlay').addEventListener('click', closeCloudDrawer);
+$('genCode').addEventListener('click', genCode);
+$('saveCloud').addEventListener('click', saveCloudCfg);
+$('syncNow').addEventListener('click', () => syncNow().catch(() => {}));
+$('exitCloud').addEventListener('click', exitCloud);
+$('syncInd').addEventListener('click', openCloudDrawer);
+
 /* ============ 初始化 ============ */
 (function init() {
   const now = new Date();
@@ -685,6 +914,7 @@ $('fillSample').addEventListener('click', () => {
   setMonthLabel();
   $('date').value = todayDate();
   render();
+  initCloud();
 })();
 </script>
   <script>
